@@ -1,570 +1,775 @@
+"""
+================================
+土壤灌溉 AI 决策系统 Demo
+================================
+
+运行方式：streamlit run app.py
+
+环境要求：
+- Python 3.8+
+- streamlit >= 1.28.0
+- pandas >= 1.3.0
+- numpy >= 1.20.0
+- plotly >= 5.0.0
+- pillow >= 8.0.0
+
+文件要求：
+- app.py 与 "明集镇卫星定位图.png" 需要在同一目录
+- 或在第一次运行时自动生成测试用的卫星定位图
+
+功能说明：
+1. 首页：显示6块农田的卫星地图，可点击进入田块详情
+2. 详情页：展示土壤监测数据、气象预报、灌溉决策建议、财务分析
+
+作者: AI 农业决策系统
+日期: 2024
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import folium
-from streamlit_folium import st_folium
+import plotly.express as px
 from datetime import datetime, timedelta
-import random
+from PIL import Image, ImageDraw
+import os
+import json
 
 # ============================================================================
-# 1. 页面配置
+# 页面配置
 # ============================================================================
 st.set_page_config(
-    page_title="土壤灌溉决策系统",
-    page_icon="🌾",
+    page_title="AI 灌溉决策系统",
+    page_icon="🚜",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
-# 自定义 CSS（清爽农业主题）
+# 自定义CSS样式
 st.markdown("""
-    <style>
+<style>
+    :root {
+        --primary-color: #2ecc71;
+        --secondary-color: #3498db;
+        --warning-color: #f39c12;
+        --danger-color: #e74c3c;
+        --dark-bg: #1a1a1a;
+        --light-bg: #f8f9fa;
+    }
+
     * {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
     }
 
     .main {
         background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 0;
+        min-height: 100vh;
     }
 
-    .stMetric {
-        background-color: rgba(255, 255, 255, 0.9);
-        border-radius: 12px;
-        padding: 16px;
-        border-left: 4px solid #2ecc71;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    }
-
-    .header-title {
-        font-size: 2.5rem;
+    .stTitle {
+        color: #2c3e50;
         font-weight: 700;
-        color: #1a5f3d;
-        margin-bottom: 8px;
-        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        font-size: 2.8em;
+        margin-bottom: 0.5em;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
     }
 
-    .header-subtitle {
-        font-size: 1.1rem;
-        color: #555;
-        margin-bottom: 20px;
-    }
-
-    .field-card {
+    .metric-card {
         background: white;
+        padding: 1.5rem;
         border-radius: 12px;
-        padding: 16px;
-        margin: 8px 0;
-        border-left: 5px solid #27ae60;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 4px solid #2ecc71;
         transition: all 0.3s ease;
     }
 
-    .field-card:hover {
-        transform: translateX(4px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    .metric-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.12);
     }
 
-    .decision-box-yes {
-        background-color: #d5f4e6;
-        border-left: 5px solid #27ae60;
-        padding: 16px;
+    .chart-container {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin: 1rem 0;
+    }
+
+    .button-primary {
+        background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+        color: white;
+        padding: 0.8rem 2rem;
         border-radius: 8px;
-        margin: 12px 0;
+        border: none;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.3s;
     }
 
-    .decision-box-no {
-        background-color: #fef5e7;
-        border-left: 5px solid #f39c12;
-        padding: 16px;
-        border-radius: 8px;
-        margin: 12px 0;
+    .button-primary:hover {
+        transform: scale(1.05);
+        box-shadow: 0 6px 16px rgba(46, 204, 113, 0.3);
     }
 
-    .reason-text {
-        color: #2c3e50;
-        font-size: 0.95rem;
-        line-height: 1.5;
+    .comparison-table {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin: 1rem 0;
     }
-    </style>
+
+    .field-marker {
+        font-weight: 600;
+        padding: 0.4rem 0.8rem;
+        border-radius: 6px;
+        display: inline-block;
+        margin: 0.3rem;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .field-marker:hover {
+        transform: scale(1.1);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+</style>
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# 2. 农田数据定义
+# 数据定义
 # ============================================================================
+
 FIELDS_DATA = {
-    "field_001": {
-        "name": "明集北场田",
-        "location": "明集镇北，张庄村东300米",
-        "lat": 37.2045,
-        "lon": 117.8125,
+    "明集北场田": {
+        "location": "明集镇北，张庄村东",
+        "longitude": 117.81,
+        "latitude": 37.20,
         "area": 42,
         "crop": "冬小麦",
-        "soil_type": "壤土"
+        "color": "#e74c3c",
+        "map_x": 980,  # 像素坐标（相对于卫星图）
+        "map_y": 200,
     },
-    "field_002": {
-        "name": "明集南洼田",
+    "明集南洼田": {
         "location": "明集镇南，小李庄西",
-        "lat": 37.1725,
-        "lon": 117.8015,
+        "longitude": 117.80,
+        "latitude": 37.17,
         "area": 38,
         "crop": "冬小麦",
-        "soil_type": "粘壤土"
+        "color": "#3498db",
+        "map_x": 980,
+        "map_y": 1200,
     },
-    "field_003": {
-        "name": "明集东河滩田",
+    "明集东河滩田": {
         "location": "明集镇东，徒骇河附近",
-        "lat": 37.1895,
-        "lon": 117.8335,
+        "longitude": 117.83,
+        "latitude": 37.19,
         "area": 55,
         "crop": "夏玉米",
-        "soil_type": "沙壤土"
+        "color": "#2ecc71",
+        "map_x": 1400,
+        "map_y": 1000,
     },
-    "field_004": {
-        "name": "明集西岗田",
+    "明集西岗田": {
         "location": "明集镇西，西闸村北",
-        "lat": 37.1815,
-        "lon": 117.7805,
+        "longitude": 117.78,
+        "latitude": 37.18,
         "area": 48,
         "crop": "冬小麦",
-        "soil_type": "壤土"
+        "color": "#f39c12",
+        "map_x": 430,
+        "map_y": 880,
     },
-    "field_005": {
-        "name": "明集核心示范田",
+    "明集核心示范田": {
         "location": "明集镇政府南1km",
-        "lat": 37.1785,
-        "lon": 117.8125,
+        "longitude": 117.81,
+        "latitude": 37.18,
         "area": 65,
         "crop": "冬小麦+玉米轮作",
-        "soil_type": "壤土"
+        "color": "#9b59b6",
+        "map_x": 1040,
+        "map_y": 820,
     },
-    "field_006": {
-        "name": "明集东南试验田",
+    "明集东南试验田": {
         "location": "明集镇东南，杏行村",
-        "lat": 37.1605,
-        "lon": 117.8415,
+        "longitude": 117.84,
+        "latitude": 37.16,
         "area": 30,
         "crop": "夏玉米",
-        "soil_type": "沙壤土"
-    }
+        "color": "#1abc9c",
+        "map_x": 1360,
+        "map_y": 1250,
+    },
 }
 
 
 # ============================================================================
-# 3. Mock 土壤数据生成
+# 数据生成函数
 # ============================================================================
-def generate_soil_data(field_id):
-    """为指定田块生成最近 7 天的土壤数据"""
-    np.random.seed(hash(field_id) % 2 ** 32)  # 确保同一田块数据一致
 
-    dates = [(datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+def generate_satellite_image(width=1000, height=500):
+    """
+    生成模拟的卫星定位图
+    如果使用真实卫星图，请替换此函数
+    """
+    img = Image.new("RGB", (width, height), color=(34, 139, 34))  # 深绿色背景
+    draw = ImageDraw.Draw(img, 'RGBA')
 
-    # 根据土壤类型调整基础值
-    field_info = FIELDS_DATA[field_id]
-    soil_type = field_info["soil_type"]
+    # 添加地形纹理
+    np.random.seed(42)
+    for i in range(width):
+        for j in range(height):
+            if np.random.random() > 0.95:
+                x = i + np.random.randint(-5, 5)
+                y = j + np.random.randint(-5, 5)
+                if 0 <= x < width and 0 <= y < height:
+                    draw.point((x, y), fill=(30, 130, 30))
 
-    if soil_type == "沙壤土":
-        humidity_base = 50
-        temp_base = 18
-    elif soil_type == "粘壤土":
-        humidity_base = 65
-        temp_base = 16
-    else:  # 壤土
-        humidity_base = 58
-        temp_base = 17
+    # 绘制河流
+    for i in range(int(width * 0.6), width, 3):
+        y = int(150 + 50 * np.sin(i * 0.01))
+        draw.ellipse([i - 5, y - 5, i + 5, y + 5], fill=(70, 130, 180))
 
-    # 模拟缓慢下降的湿度趋势 + 随机波动
-    humidity = [humidity_base - i * 2 + np.random.normal(0, 2) for i in range(7)]
-    humidity = [max(30, min(80, h)) for h in humidity]  # 限制在 30-80
+    # 绘制道路
+    draw.rectangle([400, 250, 600, 260], fill=(200, 180, 100))
 
-    # 温度变化（日间波动）
-    temperature = [temp_base + np.random.normal(0, 1.5) for _ in range(7)]
-    temperature = [max(5, min(35, t)) for t in temperature]
+    return img
 
-    # EC（电导率）相对稳定，轻微波动
-    ec = [0.8 + np.random.normal(0, 0.15) for _ in range(7)]
-    ec = [max(0.3, min(2.0, e)) for e in ec]
+
+def create_satellite_with_markers(img):
+    """
+    在卫星图上添加田块标记
+    """
+    draw = ImageDraw.Draw(img, 'RGBA')
+
+    for field_name, field_info in FIELDS_DATA.items():
+        x = field_info["map_x"]
+        y = field_info["map_y"]
+
+        # 绘制圆形标记
+        radius = 25
+        color_hex = field_info["color"]
+        rgb = tuple(int(color_hex[i:i + 2], 16) for i in (1,3,5))
+
+        draw.ellipse(
+            [x - radius, y - radius, x + radius, y + radius],
+            fill=(*rgb, 200),
+            outline=(255, 255, 255, 255),
+            width=3
+        )
+
+        # 绘制田块名称标签
+        font_size = 12
+        label = field_name[:4]  # 显示缩写
+        draw.text(
+            (x + 30, y - 10),
+            label,
+            fill=(0, 0, 0, 255)
+        )
+
+    return img
+
+
+def generate_soil_data(field_name, days=7):
+    """
+    生成模拟的土壤传感器数据（最近7天）
+    """
+    np.random.seed(hash(field_name) % 2 ** 32)
+
+    # 不同田块有不同的基准湿度
+    base_moisture = {
+        "明集北场田": 55,
+        "明集南洼田": 48,
+        "明集东河滩田": 72,
+        "明集西岗田": 52,
+        "明集核心示范田": 60,
+        "明集东南试验田": 68,
+    }
+
+    moisture_base = base_moisture.get(field_name, 60)
+
+    dates = [datetime.now() - timedelta(days=i) for i in range(days, 0, -1)]
+
+    # 生成湿度数据（呈下降趋势）
+    moisture = []
+    current = moisture_base
+    for i in range(days):
+        current = current - np.random.uniform(1, 3) + np.random.uniform(-1, 1)
+        moisture.append(np.clip(current, 20, 85))
+
+    # 生成温度数据
+    temperature = [15 + 8 * np.sin(i * np.pi / days) + np.random.uniform(-2, 2) for i in range(days)]
+
+    # 生成电导率数据
+    ec = [0.8 + 0.3 * np.sin(i * np.pi / days) + np.random.uniform(-0.1, 0.1) for i in range(days)]
+
+    df = pd.DataFrame({
+        "日期": dates,
+        "土壤湿度(%)": moisture,
+        "土壤温度(℃)": temperature,
+        "电导率EC(mS/cm)": ec,
+    })
+
+    return df
+
+
+def generate_weather_forecast():
+    """
+    生成模拟的气象预报（未来3天）
+    """
+    days = ["明天", "后天", "第3天"]
+    high_temp = [24, 22, 26]
+    low_temp = [15, 12, 14]
+    rainfall_prob = [30, 60, 20]
 
     return pd.DataFrame({
-        "date": dates,
-        "humidity": humidity,
-        "temperature": temperature,
-        "ec": ec
+        "日期": days,
+        "最高气温(℃)": high_temp,
+        "最低气温(℃)": low_temp,
+        "降雨概率(%)": rainfall_prob,
     })
 
 
+def calculate_irrigation_decision(field_name, current_moisture, trend, rainfall_prob):
+    """
+    根据土壤湿度、趋势、降雨概率生成灌溉决策
+    """
+
+    LOWER_THRESHOLD = 45
+    UPPER_THRESHOLD = 75
+
+    decision = {
+        "需要灌溉": False,
+        "灌溉量(mm)": 0,
+        "最佳灌溉时间": "无需灌溉",
+        "决策理由": "",
+        "优先级": "正常",
+    }
+
+    # 考虑降雨因素
+    effective_moisture = current_moisture + rainfall_prob * 0.15
+
+    if effective_moisture < LOWER_THRESHOLD:
+        decision["需要灌溉"] = True
+        decision["灌溉量(mm)"] = min(40, int((UPPER_THRESHOLD - effective_moisture) * 0.5))
+        decision["最佳灌溉时间"] = "立即灌溉"
+        decision["优先级"] = "紧急"
+        decision["决策理由"] = f"土壤湿度低于阈值({LOWER_THRESHOLD}%)，且降雨概率低。建议立即灌溉。"
+    elif effective_moisture < LOWER_THRESHOLD + 5:
+        decision["需要灌溉"] = True
+        decision["灌溉量(mm)"] = 20
+        decision["最佳灌溉时间"] = "今天下午或明天上午"
+        decision["优先级"] = "高"
+        decision["决策理由"] = f"土壤湿度接近下限，趋势向下（{trend:.2f}%/天）。建议及时灌溉。"
+    elif rainfall_prob > 50 and current_moisture > LOWER_THRESHOLD - 10:
+        decision["需要灌溉"] = False
+        decision["最佳灌溉时间"] = "等待降雨"
+        decision["优先级"] = "低"
+        decision["决策理由"] = f"降雨概率高（{rainfall_prob}%），建议暂缓灌溉，观察天气变化。"
+    else:
+        decision["需要灌溉"] = False
+        decision["最佳灌溉时间"] = "暂无需灌溉"
+        decision["优先级"] = "正常"
+        decision["决策理由"] = "土壤湿度处于适宜范围，暂无灌溉需求。"
+
+    return decision
+
+
 # ============================================================================
-# 4. 初始化 Session State
+# Session State 管理
 # ============================================================================
-if "current_page" not in st.session_state:
-    st.session_state.current_page = "map"  # "map" 或 "detail"
-if "selected_field" not in st.session_state:
+
+if "page" not in st.session_state:
+    st.session_state.page = "map"
     st.session_state.selected_field = None
 
 
 # ============================================================================
-# 5. 灌溉决策引擎（规则模拟）
+# 首页：地图展示
 # ============================================================================
-def generate_irrigation_decision(field_id, soil_data):
-    """基于土壤数据生成灌溉方案"""
-    current_humidity = soil_data["humidity"].iloc[-1]
-    avg_humidity = soil_data["humidity"].mean()
-    humidity_trend = soil_data["humidity"].iloc[-1] - soil_data["humidity"].iloc[-3]
 
-    # 模拟未来降雨（这里用随机值）
-    rain_probability = np.random.randint(0, 80)
+def show_map_page():
+    """显示农田地图主页"""
 
-    field_info = FIELDS_DATA[field_id]
-    crop = field_info["crop"]
+    col_title = st.columns([1, 0.2])[0]
+    with col_title:
+        st.markdown("# 🚜 明集镇农田监测地图")
+        st.markdown("### 山东省滨州市滨城区明集镇 - AI 灌溉决策系统")
 
-    # 灌溉阈值（根据作物调整）
-    if "小麦" in crop:
-        lower_threshold = 45
-        upper_threshold = 75
-    else:  # 玉米
-        lower_threshold = 40
-        upper_threshold = 70
+    st.markdown("---")
 
-    # 决策逻辑
-    need_irrigation = False
-    irrigation_amount = 0
-    best_time = ""
-    reason = ""
+    # 检查或生成卫星图
+    satellite_image_path = "明集镇卫星定位图.png"
 
-    if current_humidity < lower_threshold:
-        if rain_probability < 30:  # 未来降雨概率低
-            need_irrigation = True
-            deficit = lower_threshold - current_humidity
-            irrigation_amount = max(20, min(40, deficit * 0.8))
-            best_time = "今天傍晚（18-20 点）"
-            reason = f"土壤湿度{current_humidity:.1f}%已低于下限{lower_threshold}%，预报降雨概率{rain_probability}%较低，需及时灌溉补水。"
-        else:
-            need_irrigation = False
-            best_time = "-"
-            reason = f"虽然湿度较低（{current_humidity:.1f}%），但未来3天降雨概率{rain_probability}%较高，建议观察后再决定。"
-
-    elif current_humidity > upper_threshold:
-        need_irrigation = False
-        best_time = "-"
-        reason = f"土壤湿度{current_humidity:.1f}%已处于良好状态，暂不需灌溉。建议继续监测。"
-
+    if not os.path.exists(satellite_image_path):
+        # 生成测试用的卫星图
+        with st.info("⚠️ 未检测到卫星定位图，已自动生成测试图像。请将实际的卫星图放在 app.py 同一目录。"):
+            satellite_img = generate_satellite_image()
+            satellite_img.save(satellite_image_path)
     else:
-        # 在中间范围，根据趋势判断
-        if humidity_trend < -5 and rain_probability < 40:
-            need_irrigation = True
-            irrigation_amount = 15
-            best_time = "明早（6-8 点）"
-            reason = f"湿度处于中等偏干（{current_humidity:.1f}%），近期下降趋势明显，预报降雨概率{rain_probability}%较低。建议轻灌。"
-        else:
-            need_irrigation = False
-            best_time = "-"
-            reason = f"土壤湿度{current_humidity:.1f}%处于适宜范围，可继续观察。"
+        satellite_img = Image.open(satellite_image_path)
 
-    return {
-        "need_irrigation": need_irrigation,
-        "irrigation_amount": irrigation_amount,
-        "best_time": best_time,
-        "reason": reason,
-        "rain_probability": rain_probability,
-        "current_humidity": current_humidity,
-        "avg_humidity": avg_humidity
-    }
+    # 添加田块标记
+    satellite_img_marked = satellite_img.copy()
+    satellite_img_marked = create_satellite_with_markers(satellite_img_marked)
 
+    # 显示地图
+    st.markdown("### 卫星定位图")
+    col_map = st.columns(1)[0]
+    with col_map:
+        st.image(satellite_img_marked, use_column_width=True)
 
-# ============================================================================
-# 6. 地图绘制函数
-# ============================================================================
-def create_field_map():
-    """创建农田地图"""
-    # 中心点：明集镇中心
-    center_lat = 37.185
-    center_lon = 117.810
+    st.markdown("---")
 
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles="OpenStreetMap"
-    )
+    # 田块信息卡片
+    st.markdown("### 📍 选择田块查看详情")
 
-    # 添加所有田块标记
-    for field_id, field_info in FIELDS_DATA.items():
-        popup_text = f"""
-        <b>{field_info['name']}</b><br>
-        位置: {field_info['location']}<br>
-        面积: {field_info['area']} 亩<br>
-        作物: {field_info['crop']}
-        """
+    cols = st.columns(3)
+    for idx, (field_name, field_info) in enumerate(FIELDS_DATA.items()):
+        with cols[idx % 3]:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h4 style="color: {field_info['color']}; margin-bottom: 0.5rem;">
+                    {field_name}
+                </h4>
+                <p style="font-size: 0.9rem; color: #666;">
+                    📍 {field_info['location']}<br/>
+                    🌾 {field_info['crop']}<br/>
+                    📐 {field_info['area']} 亩
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
 
-        folium.Marker(
-            location=[field_info['lat'], field_info['lon']],
-            popup=folium.Popup(popup_text, max_width=250),
-            tooltip=field_info['name'],
-            icon=folium.Icon(color='green', icon='leaf', prefix='fa')
-        ).add_to(m)
+            if st.button(f"查看详情: {field_name}", key=f"btn_{idx}"):
+                st.session_state.page = "detail"
+                st.session_state.selected_field = field_name
+                st.rerun()
 
-    return m
+    st.markdown("---")
 
+    # 统计信息
+    st.markdown("### 📊 农场总体统计")
 
-# ============================================================================
-# 7. 绘制土壤数据曲线
-# ============================================================================
-def create_soil_chart(soil_data):
-    """创建土壤三参数曲线图"""
-    fig = make_subplots(
-        rows=1, cols=1,
-        specs=[[{"secondary_y": True}]]
-    )
+    col1, col2, col3, col4 = st.columns(4)
 
-    # 湿度（左 Y 轴）
-    fig.add_trace(
-        go.Scatter(
-            x=soil_data['date'],
-            y=soil_data['humidity'],
-            name='土壤湿度 (%)',
-            line=dict(color='#3498db', width=3),
-            fill='tozeroy',
-            fillcolor='rgba(52, 152, 219, 0.2)',
-            mode='lines+markers',
-            marker=dict(size=8)
-        ),
-        secondary_y=False
-    )
-
-    # 温度（左 Y 轴）
-    fig.add_trace(
-        go.Scatter(
-            x=soil_data['date'],
-            y=soil_data['temperature'],
-            name='土壤温度 (℃)',
-            line=dict(color='#e74c3c', width=3),
-            mode='lines+markers',
-            marker=dict(size=8)
-        ),
-        secondary_y=False
-    )
-
-    # EC（右 Y 轴）
-    fig.add_trace(
-        go.Scatter(
-            x=soil_data['date'],
-            y=soil_data['ec'],
-            name='电导率 (µS/cm)',
-            line=dict(color='#f39c12', width=3),
-            mode='lines+markers',
-            marker=dict(size=8),
-            yaxis='y2'
-        ),
-        secondary_y=True
-    )
-
-    # 设置 Y 轴标签
-    fig.update_yaxes(title_text="<b>湿度 (%) / 温度 (℃)</b>", secondary_y=False, range=[0, 100])
-    fig.update_yaxes(title_text="<b>电导率 (µS/cm)</b>", secondary_y=True, range=[0, 2.5])
-
-    # 设置 X 轴
-    fig.update_xaxes(title_text="<b>日期</b>")
-
-    # 整体美化
-    fig.update_layout(
-        title="<b>最近 7 天土壤参数趋势</b>",
-        hovermode='x unified',
-        template='plotly_white',
-        height=450,
-        font=dict(size=11),
-        legend=dict(orientation='v', x=0.02, y=0.98)
-    )
-
-    return fig
-
-
-# ============================================================================
-# 8. 页面逻辑：地图界面
-# ============================================================================
-def page_map():
-    st.markdown("<div class='header-title'>🌾 土壤灌溉 AI 决策系统</div>", unsafe_allow_html=True)
-    st.markdown("<div class='header-subtitle'>滨州市滨城区明集镇 · 实时灌溉方案生成</div>", unsafe_allow_html=True)
-
-    st.write("---")
-
-    col1, col2 = st.columns([3, 1])
-
+    total_area = sum(f["area"] for f in FIELDS_DATA.values())
     with col1:
-        st.subheader("📍 田块分布地图")
-        field_map = create_field_map()
-        map_data = st_folium(field_map, width=1200, height=500)
-
-        # 地图点击后处理
-        if map_data and map_data['last_clicked']:
-            clicked_lat = map_data['last_clicked']['lat']
-            clicked_lon = map_data['last_clicked']['lng']
-
-            # 查找最近的田块
-            for field_id, field_info in FIELDS_DATA.items():
-                dist = abs(field_info['lat'] - clicked_lat) + abs(field_info['lon'] - clicked_lon)
-                if dist < 0.01:  # 足够接近
-                    st.session_state.selected_field = field_id
-                    st.session_state.current_page = "detail"
-                    st.rerun()
+        st.metric("总田块数", len(FIELDS_DATA), "块")
 
     with col2:
-        st.subheader("📋 田块列表")
-        for field_id, field_info in FIELDS_DATA.items():
-            with st.container():
-                st.markdown(f"""
-                <div class='field-card' onclick="document.querySelector('[data-field-id={field_id}]').click()">
-                    <b>{field_info['name']}</b><br>
-                    <small>{field_info['crop']}</small><br>
-                    <small>面积: {field_info['area']} 亩</small>
-                </div>
-                """, unsafe_allow_html=True)
+        st.metric("总耕种面积", total_area, "亩")
 
-                if st.button(f"查看详情", key=f"btn_{field_id}"):
-                    st.session_state.selected_field = field_id
-                    st.session_state.current_page = "detail"
-                    st.rerun()
+    with col3:
+        wheat_fields = sum(1 for f in FIELDS_DATA.values() if "小麦" in f["crop"])
+        st.metric("冬小麦田块", wheat_fields, "块")
+
+    with col4:
+        corn_fields = sum(1 for f in FIELDS_DATA.values() if "玉米" in f["crop"])
+        st.metric("夏玉米田块", corn_fields, "块")
+
+    st.markdown("---")
+    st.markdown("""
+    **使用说明：**
+    - 点击上方卡片中的"查看详情"按钮，进入具体田块的监测和决策界面
+    - 实时显示土壤水热盐的动态变化，基于大数据算法生成灌溉方案
+    - 可视化展示AI灌溉决策相比传统灌溉的经济效益
+    """)
 
 
 # ============================================================================
-# 9. 页面逻辑：田块详情界面
+# 详情页：田块监测与决策
 # ============================================================================
-def page_detail():
-    field_id = st.session_state.selected_field
-    field_info = FIELDS_DATA[field_id]
 
-    # 返回地图按钮
-    if st.button("← 返回地图"):
-        st.session_state.current_page = "map"
-        st.session_state.selected_field = None
-        st.rerun()
+def show_detail_page():
+    """显示田块详情和灌溉决策"""
 
-    st.markdown(f"<div class='header-title'>🌾 {field_info['name']}</div>", unsafe_allow_html=True)
-    st.markdown(f"""
-    <div class='header-subtitle'>
-        📍 {field_info['location']} · 
-        🌾 {field_info['crop']} · 
-        📐 {field_info['area']} 亩
-    </div>
-    """, unsafe_allow_html=True)
+    field_name = st.session_state.selected_field
+    if field_name not in FIELDS_DATA:
+        st.error("田块不存在")
+        return
 
-    st.write("---")
+    field_info = FIELDS_DATA[field_name]
 
-    # 生成数据
-    soil_data = generate_soil_data(field_id)
+    # 返回按钮
+    col_header = st.columns([0.15, 0.85])
+    with col_header[0]:
+        if st.button("⬅️ 返回地图", key="btn_back"):
+            st.session_state.page = "map"
+            st.session_state.selected_field = None
+            st.rerun()
 
-    # 第一行：关键指标卡片
-    st.subheader("📊 关键指标")
-    metric_cols = st.columns(4)
+    with col_header[1]:
+        st.markdown(f"# {field_name}")
+        st.markdown(
+            f"**位置：** {field_info['location']} | **作物：** {field_info['crop']} | **面积：** {field_info['area']} 亩")
 
-    current_humidity = soil_data["humidity"].iloc[-1]
-    avg_humidity = soil_data["humidity"].mean()
-    current_temp = soil_data["temperature"].iloc[-1]
-    current_ec = soil_data["ec"].iloc[-1]
+    st.markdown("---")
 
-    with metric_cols[0]:
-        st.metric("当前土壤湿度", f"{current_humidity:.1f}%",
-                  delta=f"{current_humidity - soil_data['humidity'].iloc[-2]:.1f}%")
+    # 获取数据
+    soil_df = generate_soil_data(field_name, days=7)
+    weather_df = generate_weather_forecast()
+    current_moisture = soil_df["土壤湿度(%)"].iloc[-1]
+    moisture_trend = (soil_df["土壤湿度(%)"].iloc[-1] - soil_df["土壤湿度(%)"].iloc[-3]) / 2
 
-    with metric_cols[1]:
-        st.metric("7日平均湿度", f"{avg_humidity:.1f}%")
+    # 左右两栏布局
+    col_left, col_right = st.columns([0.6, 0.4])
 
-    with metric_cols[2]:
-        st.metric("当前土壤温度", f"{current_temp:.1f}℃")
+    # ========== 左侧：数据和决策 ==========
+    with col_left:
+        st.markdown("### 📈 土壤监测数据（最近7天）")
 
-    with metric_cols[3]:
-        st.metric("电导率", f"{current_ec:.2f} µS/cm")
+        # 创建交互式图表
+        fig = go.Figure()
 
-    st.write("")
+        # 土壤湿度
+        fig.add_trace(go.Scatter(
+            x=soil_df["日期"],
+            y=soil_df["土壤湿度(%)"],
+            name="土壤湿度(%)",
+            mode="lines+markers",
+            line=dict(color="#3498db", width=3),
+            marker=dict(size=8),
+            yaxis="y1"
+        ))
 
-    # 第二行：土壤数据曲线
-    st.subheader("📈 7日数据趋势")
-    fig_soil = create_soil_chart(soil_data)
-    st.plotly_chart(fig_soil, use_container_width=True)
+        # 土壤温度
+        fig.add_trace(go.Scatter(
+            x=soil_df["日期"],
+            y=soil_df["土壤温度(℃)"],
+            name="土壤温度(℃)",
+            mode="lines+markers",
+            line=dict(color="#e74c3c", width=3),
+            marker=dict(size=8),
+            yaxis="y2"
+        ))
 
-    # 第三行：阈值信息
-    st.subheader("⚙️ 灌溉阈值")
-    threshold_cols = st.columns(2)
+        # 电导率
+        fig.add_trace(go.Scatter(
+            x=soil_df["日期"],
+            y=soil_df["电导率EC(mS/cm)"],
+            name="电导率EC",
+            mode="lines+markers",
+            line=dict(color="#2ecc71", width=3),
+            marker=dict(size=8),
+            yaxis="y3"
+        ))
 
-    if "小麦" in field_info["crop"]:
-        lower_threshold = 45
-        upper_threshold = 75
-    else:
-        lower_threshold = 40
-        upper_threshold = 70
+        # 添加阈值线
+        fig.add_hline(y=45, line_dash="dash", line_color="red", annotation_text="下限(45%)")
+        fig.add_hline(y=75, line_dash="dash", line_color="orange", annotation_text="上限(75%)")
 
-    with threshold_cols[0]:
-        st.info(f"**湿度下限阈值**: {lower_threshold}% (作物生长所需最低值)")
+        fig.update_layout(
+            title="土壤水热盐综合监测",
+            hovermode="x unified",
+            height=450,
+            xaxis=dict(title="日期", domain=[0, 0.85]),
+            yaxis=dict(title="土壤湿度(%)", color="#3498db"),
+            yaxis2=dict(title="土壤温度(℃)", color="#e74c3c", overlaying="y", side="right"),
+            yaxis3=dict(title="电导率(mS/cm)", color="#2ecc71", overlaying="y", side="right", anchor="x", position=0.85,
+                        showticklabels=False),
+            plot_bgcolor="rgba(240,240,240,0.5)",
+            margin=dict(r=120)
+        )
 
-    with threshold_cols[1]:
-        st.warning(f"**湿度上限阈值**: {upper_threshold}% (防止根部腐烂)")
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.write("")
+        st.markdown("---")
 
-    # 第四行：气象预报（模拟）
-    st.subheader("🌤️ 未来 3 日气象预报（模拟）")
-    forecast_data = {
-        "日期": ["今天", "明天", "后天"],
-        "最高温 (℃)": [28 + np.random.randint(-2, 3), 26 + np.random.randint(-2, 3), 25 + np.random.randint(-2, 3)],
-        "最低温 (℃)": [18 + np.random.randint(-1, 2), 16 + np.random.randint(-1, 2), 15 + np.random.randint(-1, 2)],
-        "降雨概率 (%)": [10 + np.random.randint(0, 20), 20 + np.random.randint(0, 30), 15 + np.random.randint(0, 25)]
-    }
-    forecast_df = pd.DataFrame(forecast_data)
-    st.dataframe(forecast_df, use_container_width=True, hide_index=True)
+        st.markdown("### 📊 关键指标")
 
-    st.write("")
+        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
 
-    # 第五行：灌溉决策
-    st.subheader("💡 灌溉决策方案")
-
-    if st.button("🚀 生成灌溉方案", type="primary", use_container_width=True):
-        decision = generate_irrigation_decision(field_id, soil_data)
-        st.session_state.decision = decision
-
-    # 显示决策结果
-    if "decision" in st.session_state:
-        decision = st.session_state.decision
-
-        st.write("")
-
-        if decision["need_irrigation"]:
+        with metric_col1:
             st.markdown(f"""
-            <div class='decision-box-yes'>
-                <h3>✅ 建议灌溉</h3>
-                <p class='reason-text'><b>灌溉量:</b> {decision['irrigation_amount']:.0f} mm</p>
-                <p class='reason-text'><b>最佳灌溉时间:</b> {decision['best_time']}</p>
-                <p class='reason-text'><b>决策理由:</b> {decision['reason']}</p>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class='decision-box-no'>
-                <h3>⏸️ 暂不灌溉</h3>
-                <p class='reason-text'><b>当前土壤湿度:</b> {decision['current_humidity']:.1f}%</p>
-                <p class='reason-text'><b>决策理由:</b> {decision['reason']}</p>
+            <div class="metric-card">
+                <p style="color: #888; font-size: 0.9rem; margin-bottom: 0.5rem;">当前湿度</p>
+                <h3 style="color: #3498db; margin: 0;">{current_moisture:.1f}%</h3>
             </div>
             """, unsafe_allow_html=True)
 
-        # 详细数据
-        with st.expander("📋 详细决策数据"):
-            detail_cols = st.columns(3)
-            with detail_cols[0]:
-                st.metric("当前湿度", f"{decision['current_humidity']:.1f}%")
-            with detail_cols[1]:
-                st.metric("7日平均湿度", f"{decision['avg_humidity']:.1f}%")
-            with detail_cols[2]:
-                st.metric("预报降雨概率", f"{decision['rain_probability']}%")
+        with metric_col2:
+            avg_moisture = soil_df["土壤湿度(%)"].mean()
+            st.markdown(f"""
+            <div class="metric-card">
+                <p style="color: #888; font-size: 0.9rem; margin-bottom: 0.5rem;">历史平均</p>
+                <h3 style="color: #9b59b6; margin: 0;">{avg_moisture:.1f}%</h3>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with metric_col3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <p style="color: #888; font-size: 0.9rem; margin-bottom: 0.5rem;">下限阈值</p>
+                <h3 style="color: #e74c3c; margin: 0;">45%</h3>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with metric_col4:
+            st.markdown(f"""
+            <div class="metric-card">
+                <p style="color: #888; font-size: 0.9rem; margin-bottom: 0.5rem;">上限阈值</p>
+                <h3 style="color: #f39c12; margin: 0;">75%</h3>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        st.markdown("### 🌤️ 气象预报（未来3天）")
+
+        weather_display = weather_df.copy()
+        weather_display.columns = ["日期", "最高温(℃)", "最低温(℃)", "降雨概率(%)"]
+        st.dataframe(weather_display, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        st.markdown("### 🤖 AI灌溉决策")
+
+        if st.button("生成灌溉方案", key="btn_decision"):
+            st.session_state.show_decision = True
+
+        if st.session_state.get("show_decision", False):
+            rainfall_prob = weather_df["降雨概率(%)"].iloc[0]
+            decision = calculate_irrigation_decision(field_name, current_moisture, moisture_trend, rainfall_prob)
+
+            # 显示决策结果
+            decision_status = "✅ 无需灌溉" if not decision["需要灌溉"] else "⚠️ 需要灌溉"
+
+            st.markdown(f"""
+            <div class="metric-card" style="border-left-color: {'#e74c3c' if decision['需要灌溉'] else '#2ecc71'};">
+                <h4 style="color: {'#e74c3c' if decision['需要灌溉'] else '#2ecc71'}; margin-bottom: 1rem;">
+                    {decision_status}
+                </h4>
+
+                <p style="font-size: 1rem; margin: 0.5rem 0;">
+                    <strong>灌溉量：</strong> {decision['灌溉量(mm)']} mm
+                </p>
+                <p style="font-size: 1rem; margin: 0.5rem 0;">
+                    <strong>最佳灌溉时间：</strong> {decision['最佳灌溉时间']}
+                </p>
+                <p style="font-size: 1rem; margin: 0.5rem 0;">
+                    <strong>优先级：</strong> {decision['优先级']}
+                </p>
+                <hr style="margin: 1rem 0;">
+                <p style="font-size: 0.95rem; color: #555; line-height: 1.6;">
+                    <strong>决策理由：</strong><br/>
+                    {decision['决策理由']}
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        st.markdown("### 💰 经济效益分析")
+
+        # 财务数据
+        traditional_water = 450  # mm/season
+        ai_water = 315  # mm/season (30% 节水)
+        water_saving_rate = 30
+        yield_increase_rate = 15
+
+        tab1, tab2 = st.tabs(["效率对比", "成本分析"])
+
+        with tab1:
+            comparison_df = pd.DataFrame({
+                "指标": ["用水量(mm/季)", "增产率(%)", "节水率(%)", "年均亩收益(元)"],
+                "传统灌溉": [traditional_water, 0, 0, 4200],
+                "AI智能灌溉": [ai_water, yield_increase_rate, water_saving_rate, 5250],
+                "增益": [
+                    f"-{traditional_water - ai_water}mm",
+                    f"+{yield_increase_rate}%",
+                    f"+{water_saving_rate}%",
+                    f"+¥{5250 - 4200}"
+                ]
+            })
+
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+        with tab2:
+            cost_df = pd.DataFrame({
+                "成本项目": [
+                    "灌溉成本(元/亩·季)",
+                    "人工成本(元/亩·季)",
+                    "肥料成本(元/亩·季)",
+                    "总成本(元/亩·季)"
+                ],
+                "传统灌溉": [180, 150, 320, 650],
+                "AI智能灌溉": [126, 100, 280, 506],
+            })
+
+            st.dataframe(cost_df, use_container_width=True, hide_index=True)
+
+            st.markdown("""
+            **主要优势：**
+            - 💧 节水30%：通过精准灌溉降低用水成本
+            - 🌾 增产15%：优化灌溉时间和用量，提高产量
+            - 💰 成本降低22%：综合降低灌溉和人工成本
+            - 📈 年亩增收¥1,050：显著提升经济效益
+            """)
+
+    # ========== 右侧：实时监控 ==========
+    with col_right:
+        st.markdown("### 📹 实时监控")
+
+        st.info("""
+        **农田实时监控视频**
+
+        可嵌入B站视频：
+        https://www.bilibili.com/video/BV11hrPYYEAJ/
+
+        或替换为：
+        - 本地农田实时录像
+        - 无人机监控画面
+        - IP摄像头直播
+        """)
+
+        # 显示一个占位图
+        placeholder_img = Image.new("RGB", (400, 300), color=(200, 200, 200))
+        draw = ImageDraw.Draw(placeholder_img)
+        draw.text((100, 130), "Real-time Monitoring", fill=(100, 100, 100))
+        st.image(placeholder_img, caption="实时监控画面（点击上方链接观看）")
+
+        st.markdown("---")
+
+        st.markdown("### 📋 田块基本信息")
+
+        st.markdown(f"""
+        | 信息项 | 详情 |
+        |------|------|
+        | 田块名称 | {field_name} |
+        | 位置 | {field_info['location']} |
+        | 坐标 | {field_info['longitude']}, {field_info['latitude']} |
+        | 面积 | {field_info['area']} 亩 |
+        | 作物 | {field_info['crop']} |
+        | 监测时间 | {soil_df['日期'].iloc[-1].strftime('%Y-%m-%d %H:%M')} |
+        """)
+
+        st.markdown("---")
+
+        st.markdown("### ⚙️ 快速操作")
+
+        if st.button("📱 发送灌溉通知", use_container_width=True):
+            st.success("✅ 灌溉通知已发送至农户手机")
+
+        if st.button("🔄 刷新数据", use_container_width=True):
+            st.rerun()
+
+        if st.button("💾 导出报告", use_container_width=True):
+            st.success("✅ 报告已生成")
 
 
 # ============================================================================
-# 10. 主程序入口
+# 主程序
 # ============================================================================
+
 def main():
-    if st.session_state.current_page == "map":
-        page_map()
-    elif st.session_state.current_page == "detail":
-        page_detail()
+    if st.session_state.page == "map":
+        show_map_page()
+    elif st.session_state.page == "detail":
+        show_detail_page()
 
 
 if __name__ == "__main__":
